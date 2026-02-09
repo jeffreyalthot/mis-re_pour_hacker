@@ -16,6 +16,12 @@ Paramètres utiles :
 python3 anti_fraude.py ./logs.csv --window-minutes 10 --threshold 5 --amount-threshold 500
 ```
 
+Détection renforcée du credential stuffing :
+
+```bash
+python3 anti_fraude.py ./logs.csv --stuffing-window-minutes 15 --stuffing-user-threshold 4
+```
+
 ## Format CSV attendu
 
 Le fichier doit contenir les colonnes suivantes :

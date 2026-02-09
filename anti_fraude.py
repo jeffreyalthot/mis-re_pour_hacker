@@ -89,6 +89,43 @@ def detect_bruteforce(entries: Iterable[LogEntry], window_minutes: int, threshol
     return deduplicate_findings(findings)
 
 
+def detect_credential_stuffing(
+    entries: Iterable[LogEntry],
+    window_minutes: int,
+    user_threshold: int,
+) -> List[Finding]:
+    findings: List[Finding] = []
+    sorted_entries = sorted(entries, key=lambda entry: entry.timestamp)
+    failures_by_ip: dict[str, List[LogEntry]] = {}
+    for entry in sorted_entries:
+        if entry.action == "login" and entry.status == "failure":
+            failures_by_ip.setdefault(entry.ip, []).append(entry)
+
+    for ip, failures in failures_by_ip.items():
+        for idx, entry in enumerate(failures):
+            window_start = entry.timestamp
+            window_end = window_start + timedelta(minutes=window_minutes)
+            window_attempts = [
+                e for e in failures[idx:] if e.timestamp <= window_end
+            ]
+            distinct_users = {attempt.user for attempt in window_attempts}
+            if len(distinct_users) >= user_threshold:
+                findings.append(
+                    Finding(
+                        ip=ip,
+                        user="multiple",
+                        reason=(
+                            f"Soupçon de credential stuffing: {len(distinct_users)} comptes visés "
+                            f"en {window_minutes} min"
+                        ),
+                        first_seen=window_attempts[0].timestamp,
+                        last_seen=window_attempts[-1].timestamp,
+                        count=len(window_attempts),
+                    )
+                )
+    return deduplicate_findings(findings)
+
+
 def detect_payment_fraud(entries: Iterable[LogEntry], amount_threshold: float) -> List[Finding]:
     findings: List[Finding] = []
     for entry in entries:
@@ -195,6 +232,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=500.0,
         help="Montant de paiement élevé à surveiller (défaut: 500)",
     )
+    parser.add_argument(
+        "--stuffing-window-minutes",
+        type=int,
+        default=15,
+        help="Fenêtre (minutes) pour détecter le credential stuffing (défaut: 15)",
+    )
+    parser.add_argument(
+        "--stuffing-user-threshold",
+        type=int,
+        default=4,
+        help="Nombre de comptes distincts ciblés pour alerter (défaut: 4)",
+    )
     return parser
 
 
@@ -204,6 +253,13 @@ def main() -> None:
     entries = load_logs(args.logfile)
     findings: List[Finding] = []
     findings.extend(detect_bruteforce(entries, args.window_minutes, args.threshold))
+    findings.extend(
+        detect_credential_stuffing(
+            entries,
+            args.stuffing_window_minutes,
+            args.stuffing_user_threshold,
+        )
+    )
     findings.extend(detect_payment_fraud(entries, args.amount_threshold))
     findings.extend(detect_geo_anomaly(entries))
     report = format_report(deduplicate_findings(findings))
